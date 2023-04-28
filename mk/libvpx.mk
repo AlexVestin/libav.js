@@ -20,7 +20,6 @@ libvpx-$(LIBVPX_VERSION)/build-%/Makefile: tmp-inst/%/cflags.txt libvpx-$(LIBVPX
 			--enable-static --disable-shared \
 			--disable-webm-io \
 			--disable-examples --disable-tools --disable-docs
-	sed 's/^.* cfg = ".*/static const char* const cfg = "";/' -i libvpx-$(LIBVPX_VERSION)/build-$*/vpx_config.c
 
 extract: libvpx-$(LIBVPX_VERSION)/configure
 

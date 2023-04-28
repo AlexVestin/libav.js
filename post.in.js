@@ -461,6 +461,107 @@ var ff_decode_multi = Module.ff_decode_multi = function(ctx, pkt, frame, inPacke
     return outFrames;
 };
 
+/**
+ * Decode some number of packets at once. Done in one go to avoid excess
+ * message passing.
+ * @param ctx  AVCodecContext
+ * @param pkt  AVPacket
+ * @param frame  AVFrame
+ * @param sws_frame  AVFrame
+ * @param sws_context  SwsContext
+ * @param out_format  AVFormat
+ * @param inPackets  Incoming packets to decode
+ * @param config  Decoding options. May be "true" to indicate end of stream.
+ */
+/* @types
+ * ff_decode_multi_and_scale(
+ *     ctx: number, pkt: number, frame: number, sws_frame: number, sws_context: number, out_format: number, inPackets: Packet[],
+ *     config?: boolean | {
+ *         fin?: boolean,
+ *         ignoreErrors?: boolean
+ *     }
+ * ): Promise<any>
+ */
+var ff_decode_multi_and_scale = Module.ff_decode_multi_and_scale = function(ctx, pkt, frame, sws_frame, sws_ctx, out_format, inPackets, config) {
+    var outFrames = [];
+    if (typeof config === "boolean") {
+        config = {fin: config};
+    } else {
+        config = config || {};
+    }
+
+    let swsFrame = sws_frame;
+    let swsCtx = sws_ctx;
+
+    function handlePacket(inPacket) {
+        var ret;
+
+        if (inPacket !== null) {
+            ret = av_packet_make_writable(pkt);
+            if (ret < 0)
+                throw new Error("Failed to make packet writable: " + ff_error(ret));
+            ff_copyin_packet(pkt, inPacket);
+        } else {
+            av_packet_unref(pkt);
+        }
+
+        ret = avcodec_send_packet(ctx, pkt);
+        if (ret < 0) {
+            var err = "Error submitting the packet to the decoder: " + ff_error(ret);
+            if (!config.ignoreErrors)
+                throw new Error(err);
+            else {
+                console.log(err);
+                av_packet_unref(pkt);
+                return;
+            }
+        }
+        av_packet_unref(pkt);
+
+        while (true) {
+            ret = avcodec_receive_frame(ctx, frame);
+            if (ret === -6 /* EAGAIN */ || ret === -0x20464f45 /* AVERROR_EOF */)
+                return;
+            else if (ret < 0)
+                throw new Error("Error decoding audio frame: " + ff_error(ret));
+            
+            if (swsFrame === 0 || swsCtx === 0) {
+                var yuvFrame = ff_copyout_frame(frame);
+
+                const width = AVFrame_width(frame);
+                const height = AVFrame_height(frame);
+                const format = AVFrame_format(frame);
+                
+                swsFrame = av_frame_alloc();
+
+
+                swsCtx = sws_getContext(
+                    width, height, format,
+                    width, height, out_format,
+                    0, 0, 0, 0);
+            }
+
+            sws_scale_frame(swsCtx, swsFrame, frame);
+            var outFrame = ff_copyout_frame(swsFrame);
+
+            outFrame.pts = AVFrame_pts(frame);
+            outFrame.ptshi = AVFrame_ptshi(frame);
+            outFrame.key_frame = AVFrame_key_frame(frame);
+
+            outFrames.push(outFrame);
+            av_frame_unref(frame);
+        }
+    }
+
+    inPackets.forEach(handlePacket);
+
+    if (config.fin)
+        handlePacket(null);
+
+    return { frames: outFrames, swsCtx: swsCtx, swsFrame: swsFrame };
+};
+
+
 /* Set the content of a packet. Necessary because we tend to strip packets of their content. */
 var ff_set_packet = Module.ff_set_packet = function(pkt, data) {
     if (data.length === 0) {

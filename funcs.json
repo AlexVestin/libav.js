@@ -122,6 +122,7 @@
         "ff_free_decoder",
         "ff_encode_multi",
         "ff_decode_multi",
+        "ff_decode_multi_and_scale",
         "ff_set_packet",
         "ff_init_muxer",
         "ff_free_muxer",
